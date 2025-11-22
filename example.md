@@ -58,6 +58,6 @@ There will be 16 patches to ensure all data points are covered
 # Architecture
 
 
-![[Pasted image 20251122184918.png]]
+![[Pasted image 20251122185345.png]]
 
 

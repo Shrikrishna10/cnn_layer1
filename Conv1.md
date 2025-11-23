@@ -30,11 +30,11 @@ pairwise reduction with 2 MACs will be used to complete the partial sum calculat
 While reading later i found that i had missed the final accumulate stage in these handdrawn  calculations 
 therefore MAC cycle frequency is 68* 12.8 = 870.4 = 871 Hz (approx)  
 
-Cycle 0:  MAC0 <- a0*w0    MAC1 <- a1*w1    MAC2 <- a2*w2    MAC3 <- a3*w3   (compute 0..3)
-Cycle 1:  MAC0 <- a4*w4    MAC1 <- a5*w5    MAC2 <- a6*w6    MAC3 <- a7*w7   (compute 4..7)
-Cycle 2:  MAC0 <- a8*w8    MAC1 idle        MAC2 idle        MAC3 idle      (compute 8)
-Cycle 3:  MAC0 <- ACC0+ACC1    MAC1 <- ACC2+ACC3    MAC2/3 idle   (pairwise adds)
-Cycle 4:  MAC0 <- MAC0 + MAC1  (final add -> final_sum)*
+Cycle 0: compute patches 0 to 3 
+Cycle 1: compute patches 4 to 7 
+Cycle 2:  compute patch 8
+Cycle 3:  MAC0 <- ACC0+ACC1    MAC1 <- ACC2+ACC3   pairwise adds
+Cycle 4:  MAC0 <- MAC0 + MAC1  final add -> final_sum
 
 The ideal lower bound needs better packing, tighter control each cycle, and some changes to the internal hardware. With my current set-up, scheduling and control, I got a 5-cycle sequence per patch, so it ends up being 5 × 16 = 80 cycles per image. With the external bandwidth giving 12.8 images/s, the required MAC clock becomes 80 × 12.8 ≈ 1024 Hz.
 

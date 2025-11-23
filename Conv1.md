@@ -15,7 +15,9 @@
 - 16 bytes local memory -> SRAM (cache memory assumption)
 - 1 KB/s external memory transfer bandwidth -> 1024 B/s
 - Inputs and outputs will be streamed 
-![[IMG_20251122_155427888.jpg]]
+
+
+
 # Calculations
 
 ## Cycles and patch
@@ -37,7 +39,7 @@ Cycle 3:  MAC0 <- ACC0+ACC1    MAC1 <- ACC2+ACC3    MAC2/3 idle   (pairwise adds
 Cycle 4:  MAC0 <- MAC0 + MAC1  (final add -> final_sum)*
 therefore 5* 16 = 80 cycles 
 
-
+![[IMG_20251122_155427888.jpg]]
 
 ## Memory and transfer speeds 
 input -> 8* 8* 1 = 64 bytes -> read

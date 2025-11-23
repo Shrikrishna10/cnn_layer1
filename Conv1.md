@@ -1,17 +1,17 @@
 # Assumptions
 
-**Input:**  8 * 8 * 1  
+**Input:**  8 \* 8 \* 1  
  - greyscale image
  - each pixel will be 8-bit int
 
-**Kernel:** 3 * 3
+**Kernel:** 3 \* 3
 - Stride -> 2
 - Padding -> 1 ( to make sure i get all the border values and don't lose data )
 - 1 channel -> greyscale image 
 - 9 bytes of weights -> will be stored in the cache(local memory) -> Weight Stationary Dataflow
 
 **Constraints:**
-- 4 MACs -> each 8-bit * 8-bit -> 16-bit accumulate & output -> overflow policy - round/clip (assumption)
+- 4 MACs -> each 8-bit \* 8-bit -> 16-bit accumulate & output -> overflow policy - round/clip (assumption)
 - 16 bytes local memory -> SRAM (cache memory assumption)
 - 1 KB/s external memory transfer bandwidth -> 1024 B/s
 - Inputs and outputs will be streamed 
@@ -21,14 +21,14 @@
 # Calculations
 
 ## Cycles and patch
-Number of MAC operations -> 16* 9 = 144 
+Number of MAC operations -> 16 \* 9 = 144 
 number of MAC -> 4
 Cycles -> 144/4 = 36 cycles + 32 cycles -> 68 cycles (theoretical)
 for each output 9 MAC operations,
 pairwise reduction with 2 MACs will be used to complete the partial sum calculations and complete the operation -> this will take 2 cycles 
-2* 16 = 32 cycles 
+2\* 16 = 32 cycles 
 While reading later i found that i had missed the final accumulate stage in these handdrawn  calculations 
-therefore MAC cycle frequency is 68* 12.8 = 870.4 = 871 Hz (approx)  
+therefore MAC cycle frequency is 68\* 12.8 = 870.4 = 871 Hz (approx)  
 
 Cycle 0: compute patches 0 to 3 
 Cycle 1: compute patches 4 to 7 
@@ -48,10 +48,10 @@ The ideal lower bound needs better packing, tighter control each cycle, and some
 ![[IMG_20251122_155427888.jpg]]
 
 ## Memory and transfer speeds 
-input -> 8* 8* 1 = 64 bytes -> read
-output -> 4* 4 = 16 bytes -> write
+input -> 8\* 8\* 1 = 64 bytes -> read
+output -> 4\* 4 = 16 bytes -> write
 total is = 80 bytes
-weights -> 3* 3 = 9 bytes -> read once and stored in SRAM
+weights -> 3\* 3 = 9 bytes -> read once and stored in SRAM
 
 bandwidth -> 1024/80 = 12.8 images/s
 
@@ -67,7 +67,7 @@ There will be 16 patches to ensure all data points are covered
 
 
 ## System Overview:
-The below figure shows the Conv1 system, where the main constraint is the tiny 16-byte on-chip SRAM. This memory acts only as a scratchpad and permanently stores the 3×3 (9-byte) filter weights, leaving almost no space for activations or patch buffering. As a result, all input pixels must stream directly through the MAC array, making the design weight-stationary and fully streaming. The input and output FIFOs form the real synchronization layer, smoothing the flow between external memory and the compute core. The diagram reflects this lightweight loop: external memory → FIFOs → MAC array → FIFOs → external memory.
+The below figure shows the Conv1 system, where the main constraint is the tiny 16-byte on-chip SRAM. This memory acts only as a scratchpad and permanently stores the 3\*3 (9-byte) filter weights, leaving almost no space for activations or patch buffering. As a result, all input pixels must stream directly through the MAC array, making the design weight-stationary and fully streaming. The input and output FIFOs form the real synchronization layer, smoothing the flow between external memory and the compute core. The diagram reflects this lightweight loop: external memory → FIFOs → MAC array → FIFOs → external memory.
 ![[Pasted image 20251122185345.png]]
  
 

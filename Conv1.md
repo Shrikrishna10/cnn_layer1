@@ -94,3 +94,8 @@ The below figure illustrates the internal micro-architecture of a single MAC uni
 
 
 ![[Pasted image 20251123101048.png]]
+
+
+
+
+

@@ -10,7 +10,7 @@
 ## 1.2 Hardware Constraints
   - 4 MAC units (Multiply-Accumulate)
   - Each MAC: 8-bit \* 8-bit signed integer multiplication
-  - 16 bytes on-chip SRAM (excluding MAC accumulator registers) - capable of simultaneous 32 bits read writes 
+  - 16 bytes on-chip SRAM (excluding MAC accumulator registers) - capable of simultaneous 32 bits read writes - dual port
   - External memory bandwidth: 1 KB/s (1024 bytes/second)
   - No additional hardware (reuse MAC adders for reduction)
 
@@ -40,23 +40,20 @@
 | External bandwidth                                | 1024 bytes/s                               |
 | Data precision                                    | 8-bit signed int                           |
 | Accumulator width                                 | 20-bit signed int                          |
-
-
-
 # Assumptions
 
 2.1 Timing Assumptions
   - Multiplier latency: 2 cycles (pipelined)
   - Adder latency: 3 cycles (matching FP32 timing)
-  - SRAM access: 1 cycle read/write
+  - SRAM access: 1 byte of data read/write per cycle
   - Register load: Included in operation timing
 
 2.2 Memory Assumptions
   - External memory is byte-addressable
   - Row-major storage for input image
   - 8-byte parallel read capability from SRAM
-  - Weights loaded once per image (cached in SRAM)
   - Input image loaded once, 3×3 windows extracted in hardware
+  - Weight read for every patch
 
 2.3 Arithmetic Assumptions
   - Signed multiplication using Booth encoding or similar
@@ -119,32 +116,32 @@
 
 # COMPLETE PATCH COMPUTATION (24 CYCLES)
 
-| Cycle | Batch | Operation                | MAC0   | MAC1   | MAC2   | MAC3   | Notes                              |
-|-------:|:-----:|:-------------------------|:-------|:-------|:-------|:-------|:------------------------------------|
-| 0     | 0     | Load from SRAM           | w0,a0  | w1,a1  | w2,a2  | w3,a3  | Parallel load                       |
-| 1     | 0     | Multiply (cycle 1/2)     | ×      | ×      | ×      | ×      | Pipeline stage 1                    |
-| 2     | 0     | Multiply (cycle 2/2)     | ×      | ×      | ×      | ×      | Products ready                      |
-| 3     | 0     | Add (cycle 1/3)          | +      | +      | +      | +      | Start accumulate                    |
-| 4     | 0     | Add (cycle 2/3)          | +      | +      | +      | +      | Continue                            |
-| 5     | 0     | Add (cycle 3/3)          | +      | +      | +      | +      | ACC updated (reset)                 |
-| 6     | 1     | Load from SRAM           | w4,a4  | w5,a5  | w6,a6  | w7,a7  | Next batch                          |
-| 7     | 1     | Multiply (cycle 1/2)     | ×      | ×      | ×      | ×      |                                      |
-| 8     | 1     | Multiply (cycle 2/2)     | ×      | ×      | ×      | ×      |                                      |
-| 9     | 1     | Add (cycle 1/3)          | +      | +      | +      | +      | Accumulate mode                     |
-| 10    | 1     | Add (cycle 2/3)          | +      | +      | +      | +      |                                      |
-| 11    | 1     | Add (cycle 3/3)          | +      | +      | +      | +      | ACC += product                      |
-| 12    | 2     | Load from SRAM           | w8,a8  | idle   | idle   | idle   | Last operand                        |
-| 13    | 2     | Multiply (cycle 1/2)     | ×      | idle   | idle   | idle   | MAC0 only                           |
-| 14    | 2     | Multiply (cycle 2/2)     | ×      | idle   | idle   | idle   |                                      |
-| 15    | 2     | Add (cycle 1/3)          | +      | LOAD   | idle   | idle   | MAC1 starts reduction/load overlap  |
-| 16    | 2     | Add (cycle 2/3)          | +      | +      | idle   | idle   | Overlapped!                         |
-| 17    | 2     | Add (cycle 3/3)          | +      | +      | idle   | idle   | ACC0 final                          |
-| 18    | Red   | Reduction step 2         | idle   | +      | LOAD   | idle   | ACC1 + ACC2                         |
-| 19    | Red   | (cycle 2/3)              | idle   | +      | +      | idle   |                                      |
-| 20    | Red   | (cycle 3/3)              | idle   | done   | +      | idle   | ACC1 updated                        |
-| 21    | Red   | Reduction step 3         | idle   | idle   | +      | LOAD   | ACC1 + ACC3                         |
-| 22    | Red   | (cycle 2/3)              | idle   | idle   | done   | +      |                                      |
-| 23    | Red   | (cycle 3/3)              | idle   | idle   | idle   | +      | Final sum ready                     |
+| Cycle | Batch | Operation            | MAC0  | MAC1  | MAC2  | MAC3  | Notes                              |
+| ----: | :---: | :------------------- | :---- | :---- | :---- | :---- | :--------------------------------- |
+|     0 |   0   | Load from SRAM       | w0,a0 | w1,a1 | w2,a2 | w3,a3 | Parallel load                      |
+|     1 |   0   | Multiply (cycle 1/2) | ×     | ×     | ×     | ×     | Pipeline stage 1                   |
+|     2 |   0   | Multiply (cycle 2/2) | ×     | ×     | ×     | ×     | Products ready                     |
+|     3 |   0   | Add (cycle 1/3)      | +     | +     | +     | +     | Start accumulate                   |
+|     4 |   0   | Add (cycle 2/3)      | +     | +     | +     | +     | Continue                           |
+|     5 |   0   | Add (cycle 3/3)      | +     | +     | +     | +     | ACC updated (reset)                |
+|     6 |   1   | Load from SRAM       | w4,a4 | w5,a5 | w6,a6 | w7,a7 | Next batch                         |
+|     7 |   1   | Multiply (cycle 1/2) | ×     | ×     | ×     | ×     |                                    |
+|     8 |   1   | Multiply (cycle 2/2) | ×     | ×     | ×     | ×     |                                    |
+|     9 |   1   | Add (cycle 1/3)      | +     | +     | +     | +     | Accumulate mode                    |
+|    10 |   1   | Add (cycle 2/3)      | +     | +     | +     | +     |                                    |
+|    11 |   1   | Add (cycle 3/3)      | +     | +     | +     | +     | ACC += product                     |
+|    12 |   2   | Load from SRAM       | w8,a8 | idle  | idle  | idle  | Last operand                       |
+|    13 |   2   | Multiply (cycle 1/2) | ×     | idle  | idle  | idle  | MAC0 only                          |
+|    14 |   2   | Multiply (cycle 2/2) | ×     | idle  | idle  | idle  |                                    |
+|    15 |   2   | Add (cycle 1/3)      | +     | LOAD  | idle  | idle  | MAC1 starts reduction/load overlap |
+|    16 |   2   | Add (cycle 2/3)      | +     | +     | idle  | idle  | Overlapped!                        |
+|    17 |   2   | Add (cycle 3/3)      | +     | +     | idle  | idle  | ACC0 final                         |
+|    18 |  Red  | Reduction step 2     | idle  | +     | LOAD  | idle  | ACC1 + ACC2                        |
+|    19 |  Red  | (cycle 2/3)          | idle  | +     | +     | idle  |                                    |
+|    20 |  Red  | (cycle 3/3)          | idle  | done  | +     | idle  | ACC1 updated                       |
+|    21 |  Red  | Reduction step 3     | idle  | idle  | +     | LOAD  | ACC1 + ACC3                        |
+|    22 |  Red  | (cycle 2/3)          | idle  | idle  | done  | +     |                                    |
+|    23 |  Red  | (cycle 3/3)          | idle  | idle  | idle  | +     | Final sum ready                    |
 
 **Result:** Final sum in ACC1 (or ACC3 depending on design choice).  
 Can write to output FIFO / memory in cycle 24.
@@ -177,47 +174,17 @@ Clock frequency:
 
 # Architecture 
 4.1 System-Level Block Diagram
-  [Draw showing: External Memory ↔ SRAM ↔ MAC Array ↔ Output]
-  Include control unit, data paths, address generation
+![[Pasted image 20251205101514.png]]
 
-4.2 Memory Organization (16 bytes SRAM)
-  
-  Layout Option 1: Double-buffered
-  ┌─────────────────────────────────────┐
-  │ [0-3]:  Buffer A - weights (4B)     │
-  │ [4-7]:  Buffer A - pixels (4B)      │
-  │ [8-11]: Buffer B - weights (4B)     │
-  │ [12-15]: Buffer B - pixels (4B)     │
-  └─────────────────────────────────────┘
-  
-  Usage:
-  - While computing with Buffer A, pre-load Buffer B
-  - Swap/alternate for next batch
-  - Supports pipelining of load and compute
 
-4.3 MAC Unit Architecture (Your diagram!)
-  Include:
-  - Input registers (8-bit pixel, 8-bit weight)
-  - 8×8 multiplier (combinational, 2-cycle latency)
-  - MUX for bypass (select multiplier output vs external input)
-  - 20-bit adder (combinational, 3-cycle latency)
-  - 20-bit accumulator register
-  - Control signals (Mux_sel, mode, reset/clear, etc.)
-  
-  [USE YOUR DRAWN DIAGRAM HERE - it's perfect!]
 
-4.4 MAC Array (4 units)
-  
-  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐
-  │  MAC 0  │  │  MAC 1  │  │  MAC 2  │  │  MAC 3  │
-  │ ACC[20] │  │ ACC[20] │  │ ACC[20] │  │ ACC[20] │
-  └────┬────┘  └────┬────┘  └────┬────┘  └────┬────┘
-       │            │            │            │
-       └────────────┴────────────┴────────────┘
-              Interconnect for reduction
-              (ACC values can be shared)
+4.2 MAC Unit Architecture (Your diagram!)
+ ![[Pasted image 20251205101630.png]]
 
-4.5 Control Unit
+4.3 MAC Array (4 units)
+![[Pasted image 20251205101745.png]]
+
+4.4 Control Unit
   - Generates control signals based on current cycle
   - Manages batch sequencing (0, 1, 2)
   - Switches MAC modes (MAC vs ADD-only)
@@ -248,7 +215,7 @@ Clock frequency:
        ↓
   (Repeat for 16 patches)
 
-4.6 Data Flow
+4.5 Data Flow
   Explain step-by-step with arrows:
   
   1. External memory → SRAM (weights + pixels)
@@ -259,7 +226,7 @@ Clock frequency:
   6. For reduction: ACC → MUX → Adder (bypass mult)
   7. Final ACC → Output
 
-4.7 Critical Signals
+4.6 Critical Signals
   List main control signals:
   - clk: System clock (~3.25 kHz)
   - reset: Global reset

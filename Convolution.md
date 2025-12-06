@@ -118,6 +118,8 @@
 
 | Cycle | Batch | Operation            | MAC0  | MAC1  | MAC2  | MAC3  | Notes                              |
 | ----: | :---: | :------------------- | :---- | :---- | :---- | :---- | :--------------------------------- |
+|       |   -   | Loading SRAM         |       |       |       |       | Loading weights                    |
+|       |   -   | Loading SRAM         |       |       |       |       | Loading patch values               |
 |     0 |   0   | Load from SRAM       | w0,a0 | w1,a1 | w2,a2 | w3,a3 | Parallel load                      |
 |     1 |   0   | Multiply (cycle 1/2) | ×     | ×     | ×     | ×     | Pipeline stage 1                   |
 |     2 |   0   | Multiply (cycle 2/2) | ×     | ×     | ×     | ×     | Products ready                     |
@@ -144,7 +146,7 @@
 |    23 |  Red  | (cycle 3/3)          | idle  | idle  | idle  | +     | Final sum ready                    |
 
 **Result:** Final sum in ACC1 (or ACC3 depending on design choice).  
-Can write to output FIFO / memory in cycle 24.
+Can write to output FIFO / memory in cycle 24.(+3 for loading initial values)
   
 **Key:** `×` = Multiply in progress · `+` = Add/accumulate in progress · `LOAD` = Loading external ACC value for ADD-only mode · `idle` = MAC not active
 
@@ -156,7 +158,6 @@ Per image computation:
 
 Memory access per image:
   - Input pixels: 64 bytes (8×8, loaded once)
-  - Weights: 9 bytes (loaded once, shared across patches)
   - Outputs: 16 patches × 3 bytes = 48 bytes
   - Total: 64 + 9 + 48 = 121 bytes per image
 

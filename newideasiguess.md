@@ -1,0 +1,632 @@
+# Convolution Accelerator Design Document (Final)
+
+===============================================================
+## 1. Design Requirements
+===============================================================
+
+### 1.1 Problem Statement
+- Implement Conv1 layer for simplified LeNet-5
+- Input: 8×8 grayscale image (single channel)
+- Kernel: 3×3 convolution
+- Stride: 2
+- Padding: 1
+- Output: 4×4 feature map (16 values)
+
+### 1.2 Hardware Constraints
+- 4 MAC units (Multiply-Accumulate)
+- Each MAC: 8-bit × 8-bit signed integer multiplication
+- 16 bytes on-chip SRAM (dual-port, each port 32-bit = 4 bytes/cycle)
+- External memory bandwidth: 1 KB/s (1024 bytes/second)
+- Local memory to SRAM transfer: 1 byte per cycle
+- No additional hardware (reuse MAC adders for reduction)
+
+### 1.3 Design Goals
+- Maximize throughput (images/second)
+- Minimize on-chip memory footprint
+- Efficient bandwidth utilization
+- Minimize MAC idle time through pipelining
+
+### 1.4 Data Types
+- Input pixels: 8-bit signed integers [-128, 127]
+- Weights: 8-bit signed integers [-128, 127]
+- Products: 16-bit signed integers
+- Accumulator: 20-bit signed integers (to prevent overflow)
+- Output: 20-bit signed integers (3 bytes packed)
+
+### 1.5 Parameter Summary Table
+
+| Parameter           | Value                 |
+| ------------------- | --------------------- |
+| Input dimensions    | 8 × 8 × 1 (64 bytes)  |
+| Kernel size         | 3 × 3 (9 bytes)       |
+| Stride              | 2                     |
+| Padding             | 1                     |
+| Output dimensions   | 4 × 4 × 1 (16 values) |
+| Parallel MACs       | 4                     |
+| On-chip SRAM        | 16 bytes (dual-port)  |
+| SRAM port width     | 32-bit (4 bytes/port) |
+| Local mem bandwidth | 1 byte/cycle          |
+| Data precision      | 8-bit signed int      |
+| Accumulator width   | 20-bit signed int     |
+
+===============================================================
+## 2. Memory Architecture
+===============================================================
+
+### 2.1 SRAM Organization
+
+The 16-byte dual-port SRAM is organized as a **working buffer**, not full image storage:
+
+```
+SRAM Layout (16 bytes total):
++------------------+------------------+
+|   Bank A (8B)    |   Bank B (8B)    |
++------------------+------------------+
+| Bytes 0-7        | Bytes 8-15       |
++------------------+------------------+
+
+Dual-Port Access:
+- Port A: 32-bit read (4 bytes simultaneously)
+- Port B: 32-bit write (4 bytes simultaneously)
+- Both ports can operate in same cycle
+```
+
+### 2.2 Dual-Port SRAM Clarification
+
+A dual-port SRAM provides **two independent address ports**, NOT two bytes from one port:
+
+| Configuration          | Bytes/Cycle | Use Case                    |
+|------------------------|-------------|-----------------------------|
+| Single-port, 8-bit     | 1           | Sequential access only      |
+| Single-port, 32-bit    | 4           | Parallel read OR write      |
+| Dual-port, 32-bit each | 8           | Simultaneous read AND write |
+
+**Our design**: Dual-port with 32-bit width per port = 8 bytes/cycle total
+- Port A: Read 4 bytes (feed to MACs)
+- Port B: Write 4 bytes (load from local memory)
+
+### 2.3 Memory Hierarchy
+
+```
+External Memory (unlimited)
+        │
+        │ 1 byte/cycle (local memory interface)
+        ▼
+Local Memory Buffer (staging)
+        │
+        │ 1 byte/cycle to SRAM
+        ▼
+On-chip SRAM (16 bytes, dual-port)
+        │
+        │ 4 bytes/cycle per port
+        ▼
+MAC Registers (4 × 2 = 8 bytes)
+```
+
+### 2.4 Data Loading Strategy
+
+Since SRAM (16 bytes) cannot hold entire image (64 bytes), data is **streamed**:
+
+1. **Image pixels**: Loaded on-demand per patch, not stored entirely
+2. **Weights**: 9 bytes loaded per patch (fits in SRAM with pixels)
+3. **Working set per patch**: 9 weights + 9 pixels = 18 bytes
+   - Exceeds 16-byte SRAM → requires **double-buffering**
+
+**Double-Buffer Strategy**:
+- While MACs compute with Bank A data, load next data into Bank B
+- Swap roles each batch
+
+===============================================================
+## 3. Intra-Patch Pipelining (Optimized)
+===============================================================
+
+### 3.1 Pipeline Concept
+
+The key optimization is **overlapping data loading with computation**:
+
+```
+Without Pipelining (Original):
+  LOAD(9 cycles) → COMPUTE(18 cycles) → REDUCE(6 cycles) → WRITE(3 cycles)
+  MAC idle: 12 cycles (33% waste)
+
+With Pipelining (Optimized):
+  LOAD overlaps with COMPUTE using dual-port SRAM
+  MAC idle: 3 cycles (initial fill only)
+```
+
+### 3.2 Optimized Per-Patch Timeline (27 cycles)
+
+```
++-------+---------------------------+---------------------------+------------------+
+| Cycle | Port A (Read to MACs)     | Port B (Write from Local) | MAC Activity     |
++-------+---------------------------+---------------------------+------------------+
+|   0   | -                         | Load w0,w1,w2,w3          | idle (fill)      |
+|   1   | -                         | Load w4,w5,w6,w7          | idle (fill)      |
+|   2   | -                         | Load w8,a0,a1,a2          | idle (fill)      |
++-------+---------------------------+---------------------------+------------------+
+|   3   | Read w0-w3, a0-a3         | Load a3,a4,a5,a6          | BATCH0: Load     |
+|   4   | (pipeline)                | Load a7,a8,-,-            | BATCH0: Mult 1/2 |
+|   5   | (pipeline)                | -                         | BATCH0: Mult 2/2 |
+|   6   | (pipeline)                | -                         | BATCH0: Add 1/3  |
+|   7   | (pipeline)                | -                         | BATCH0: Add 2/3  |
+|   8   | Read w4-w7, a4-a7         | -                         | BATCH0: Add 3/3  |
++-------+---------------------------+---------------------------+------------------+
+|   9   | (pipeline)                | -                         | BATCH1: Load     |
+|  10   | (pipeline)                | -                         | BATCH1: Mult 1/2 |
+|  11   | (pipeline)                | -                         | BATCH1: Mult 2/2 |
+|  12   | (pipeline)                | -                         | BATCH1: Add 1/3  |
+|  13   | (pipeline)                | -                         | BATCH1: Add 2/3  |
+|  14   | Read w8, a8               | Load next patch w0-w3     | BATCH1: Add 3/3  |
++-------+---------------------------+---------------------------+------------------+
+|  15   | (pipeline)                | Load next patch w4-w7     | BATCH2: Load     |
+|  16   | (pipeline)                | Load next patch w8,a0-a2  | BATCH2: Mult 1/2 |
+|  17   | (pipeline)                | -                         | BATCH2: Mult 2/2 |
+|  18   | (pipeline)                | -                         | BATCH2: Add 1/3  |
+|  19   | (pipeline)                | -                         | BATCH2: Add 2/3  |
+|  20   | -                         | -                         | BATCH2: Add 3/3  |
++-------+---------------------------+---------------------------+------------------+
+|  21   | -                         | -                         | REDUCE: Step 1   |
+|  22   | -                         | -                         | REDUCE: Step 2   |
+|  23   | -                         | -                         | REDUCE: Step 3   |
++-------+---------------------------+---------------------------+------------------+
+|  24   | -                         | -                         | WRITE: Byte 0    |
+|  25   | -                         | -                         | WRITE: Byte 1    |
+|  26   | -                         | -                         | WRITE: Byte 2    |
++-------+---------------------------+---------------------------+------------------+
+
+Total: 27 cycles per patch (vs 36 without pipelining)
+```
+
+### 3.3 Key Pipelining Insights
+
+1. **Initial fill penalty**: 3 cycles to load first batch (unavoidable)
+2. **Steady-state**: Load next batch while computing current batch
+3. **Next-patch prefetch**: Start loading next patch's weights during BATCH2
+4. **Reduction cannot overlap**: Needs all ACC values, must wait for BATCH2
+
+### 3.4 MAC Utilization Analysis
+
+| Phase          | MAC0 | MAC1 | MAC2 | MAC3 | Utilization |
+| -------------- | ---- | ---- | ---- | ---- | ----------- |
+| Fill (0-2)     | idle | idle | idle | idle | 0%          |
+| BATCH0 (3-8)   | busy | busy | busy | busy | 100%        |
+| BATCH1 (9-14)  | busy | busy | busy | busy | 100%        |
+| BATCH2 (15-20) | busy | idle | idle | idle | 25%         |
+| REDUCE (21-23) | idle | busy | busy | busy | 75%         |
+| WRITE (24-26)  | idle | idle | idle | idle | 0%          |
+
+**Average utilization**: (0×3 + 4×6 + 4×6 + 1×6 + 3×3 + 0×3) / (4×27) = 63/108 = **58%**
+
+===============================================================
+## 4. Cycle Count Analysis
+===============================================================
+
+### 4.1 Per-Patch Cycle Breakdown (Optimized)
+
+| Phase               | Cycles | Description                               |
+| ------------------- | ------ | ----------------------------------------- |
+| INITIAL_FILL        | 3      | Load first batch (only first patch)       |
+| COMPUTE_BATCH0      | 6      | Products 0-3, load next batch overlapped  |
+| COMPUTE_BATCH1      | 6      | Products 4-7, load next batch overlapped  |
+| COMPUTE_BATCH2      | 6      | Product 8, prefetch next patch weights    |
+| REDUCE              | 3      | Combine 4 ACCs (optimized tree reduction) |
+| WRITE_OUTPUT        | 3      | Write 3-byte result to memory             |
+| **Total per patch** | **27** | (24 for patches 2-16 due to prefetch)     |
+
+### 4.2 Per-Image Cycle Breakdown (Optimized)
+
+| Phase               | Cycles | Occurrences | Total Cycles |
+| ------------------- | ------ | ----------- | ------------ |
+| INITIAL_FILL        | 3      | 1           | 3            |
+| COMPUTE (3 batch)   | 18     | 16          | 288          |
+| REDUCE              | 3      | 16          | 48           |
+| WRITE_OUTPUT        | 3      | 16          | 48           |
+| **Total per image** |        |             | **387**      |
+
+**Note**: With next-patch prefetching, patches 2-16 save 3 cycles each.
+Optimized total: 3 + 27 + (24 × 15) = 3 + 27 + 360 = **390 cycles**
+
+### 4.3 Comparison: Original vs Optimized
+
+| Metric           | Original | Optimized | Improvement |
+| ---------------- | -------- | --------- | ----------- |
+| Cycles per patch | 36       | 27        | 25% faster  |
+| Cycles per image | 640      | 390       | 39% faster  |
+| MAC idle cycles  | 12/patch | 6/patch   | 50% less    |
+
+===============================================================
+## 5. Memory Access Analysis
+===============================================================
+
+### 5.1 Memory Access Per Image
+
+| Component    | Calculation            | Bytes   |
+| ------------ | ---------------------- | ------- |
+| Input pixels | 9 × 16 (per patch)     | 144     |
+| Weights      | 9 × 16 (per patch)     | 144     |
+| Outputs      | 3 × 16 (20-bit packed) | 48      |
+| **Total**    |                        | **336** |
+
+**Note**: Pixels are re-loaded per patch since SRAM cannot hold entire image.
+With smarter row caching (if SRAM were larger), this could reduce to ~160 bytes.
+
+### 5.2 Bandwidth Analysis
+
+```
+External bandwidth: 1024 bytes/s
+Bytes per image: 336 bytes
+Maximum bandwidth-limited throughput: 1024 / 336 = 3.05 images/s
+```
+
+### 5.3 Throughput Analysis
+
+| Clock (Hz) | Compute (img/s) | Bandwidth (img/s) | Actual (img/s) | Bottleneck |
+|------------|-----------------|-------------------|----------------|------------|
+| 100        | 0.26            | 3.05              | 0.26           | Compute    |
+| 500        | 1.28            | 3.05              | 1.28           | Compute    |
+| 1000       | 2.56            | 3.05              | 2.56           | Compute    |
+| 1190       | 3.05            | 3.05              | 3.05           | Balanced   |
+| 2000       | 5.13            | 3.05              | 3.05           | Bandwidth  |
+| 5000       | 12.82           | 3.05              | 3.05           | Bandwidth  |
+
+**Crossover frequency**: 390 × 3.05 = **1190 Hz**
+
+===============================================================
+## 6. FSM Architecture
+===============================================================
+
+### 6.1 State Diagram
+
+```
+                      ┌──────────────┐
+                      │     IDLE     │
+                      └──────┬───────┘
+                             │ start
+                             ▼
+                      ┌──────────────┐
+                      │ INITIAL_FILL │ ← 3 cycles (first patch only)
+                      └──────┬───────┘
+                             │
+                ┌────────────▼────────────────┐
+                │      PATCH_LOOP (×16)       │
+                │  ┌───────────────────────┐  │
+                │  │   COMPUTE_BATCH0      │  │ ← 6 cycles (load overlapped)
+                │  └───────────┬───────────┘  │
+                │              ▼              │
+                │  ┌───────────────────────┐  │
+                │  │   COMPUTE_BATCH1      │  │ ← 6 cycles (load overlapped)
+                │  └───────────┬───────────┘  │
+                │              ▼              │
+                │  ┌───────────────────────┐  │
+                │  │   COMPUTE_BATCH2      │  │ ← 6 cycles (prefetch next)
+                │  └───────────┬───────────┘  │
+                │              ▼              │
+                │  ┌───────────────────────┐  │
+                │  │       REDUCE          │  │ ← 3 cycles
+                │  └───────────┬───────────┘  │
+                │              ▼              │
+                │  ┌───────────────────────┐  │
+                │  │    WRITE_OUTPUT       │  │ ← 3 cycles
+                │  └───────────┬───────────┘  │
+                │              │              │
+                │         patch_count++       │
+                └─────────────────────────────┘
+                             │ patch_count == 16
+                             ▼
+                      ┌──────────────┐
+                      │     DONE     │
+                      └──────────────┘
+```
+
+### 6.2 State Encoding
+
+```verilog
+localparam IDLE           = 3'd0;
+localparam INITIAL_FILL   = 3'd1;
+localparam COMPUTE_BATCH0 = 3'd2;
+localparam COMPUTE_BATCH1 = 3'd3;
+localparam COMPUTE_BATCH2 = 3'd4;
+localparam REDUCE         = 3'd5;
+localparam WRITE_OUTPUT   = 3'd6;
+localparam DONE           = 3'd7;
+```
+
+### 6.3 Control Signals Per State
+
+| State          | sram_rd | sram_wr | mac_mode | acc_rst | mem_wr | prefetch |
+|----------------|---------|---------|----------|---------|--------|----------|
+| IDLE           | 0       | 0       | -        | 1       | 0      | 0        |
+| INITIAL_FILL   | 0       | 1       | -        | 1       | 0      | 0        |
+| COMPUTE_BATCH0 | 1       | 1       | MAC      | 1       | 0      | 0        |
+| COMPUTE_BATCH1 | 1       | 1       | MAC      | 0       | 0      | 0        |
+| COMPUTE_BATCH2 | 1       | 1       | MAC      | 0       | 0      | 1        |
+| REDUCE         | 0       | 0       | ADD_ONLY | 0       | 0      | 0        |
+| WRITE_OUTPUT   | 0       | 0       | -        | 0       | 1      | 0        |
+| DONE           | 0       | 0       | -        | 1       | 0      | 0        |
+
+===============================================================
+## 7. Architecture
+===============================================================
+
+### 7.1 System Block Diagram
+
+```
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │                         CONVOLUTION ACCELERATOR                      │
+  │                                                                      │
+  │  ┌──────────────┐      ┌──────────────┐      ┌──────────────┐       │
+  │  │   External   │      │   Control    │      │    Output    │       │
+  │  │    Memory    │◄────►│     FSM      │◄────►│    Buffer    │       │
+  │  └──────┬───────┘      └──────┬───────┘      └──────────────┘       │
+  │         │                     │                                      │
+  │         │ 1 byte/cycle        │ Control signals                      │
+  │         ▼                     ▼                                      │
+  │  ┌─────────────────────────────────────────┐                        │
+  │  │           16-byte Dual-Port SRAM        │                        │
+  │  │  ┌─────────────┐    ┌─────────────┐     │                        │
+  │  │  │  Port A     │    │   Port B    │     │                        │
+  │  │  │  (Read)     │    │   (Write)   │     │                        │
+  │  │  │  4 bytes    │    │   4 bytes   │     │                        │
+  │  │  └──────┬──────┘    └──────┬──────┘     │                        │
+  │  └─────────┼──────────────────┼────────────┘                        │
+  │            │                  │                                      │
+  │            │ 4 bytes/cycle    │ 1 byte/cycle (from local mem)       │
+  │            ▼                  │                                      │
+  │  ┌─────────────────────────────────────────┐                        │
+  │  │              MAC Array (4 units)        │                        │
+  │  │  ┌───────┐ ┌───────┐ ┌───────┐ ┌───────┐│                        │
+  │  │  │ MAC0  │ │ MAC1  │ │ MAC2  │ │ MAC3  ││                        │
+  │  │  │ ACC0  │ │ ACC1  │ │ ACC2  │ │ ACC3  ││                        │
+  │  │  └───┬───┘ └───┬───┘ └───┬───┘ └───┬───┘│                        │
+  │  │      └─────────┴────┬────┴─────────┘    │                        │
+  │  │                     │                   │                        │
+  │  │              Reduction Network          │                        │
+  │  └─────────────────────┼───────────────────┘                        │
+  │                        │                                             │
+  │                        ▼                                             │
+  │                   Final Result                                       │
+  └─────────────────────────────────────────────────────────────────────┘
+```
+
+### 7.2 MAC Unit Architecture
+
+```
+                    ┌─────────────────────────────────────┐
+                    │              MAC UNIT               │
+                    │                                     │
+  Input A (8-bit) ──┼──►┌───────────┐                     │
+                    │   │ Multiplier│──► Product (16-bit) │
+  Input B (8-bit) ──┼──►│ (2 cycles)│         │           │
+                    │   └───────────┘         │           │
+                    │                         ▼           │
+                    │        ┌─────────────────────┐      │
+  ACC_in (20-bit) ──┼───────►│        MUX         │      │
+                    │        └──────────┬──────────┘      │
+                    │                   │                 │
+                    │                   ▼                 │
+                    │            ┌───────────┐            │
+                    │            │   Adder   │            │
+                    │            │ (3 cycles)│            │
+                    │            └─────┬─────┘            │
+                    │                  │                  │
+                    │                  ▼                  │
+                    │            ┌───────────┐            │
+                    │            │    ACC    │────────────┼──► ACC_out
+                    │            │ (20-bit)  │            │
+                    │            └───────────┘            │
+                    │                                     │
+                    │  mode = MAC:      Product + ACC     │
+                    │  mode = ADD_ONLY: ACC_in + ACC      │
+                    └─────────────────────────────────────┘
+```
+
+### 7.3 Reduction Network (Tree Structure)
+
+```
+Optimized 3-cycle reduction using parallel adders:
+
+Cycle 1:  ACC0 + ACC1 → temp0    (MAC0 adder)
+          ACC2 + ACC3 → temp1    (MAC2 adder)
+
+Cycle 2:  temp0 + temp1 → temp2  (MAC0 adder)
+
+Cycle 3:  (pipeline flush)
+
+Result in temp2 after 3 cycles (vs 9 cycles sequential)
+```
+
+===============================================================
+## 8. Summary
+===============================================================
+
+### 8.1 Final Design Parameters
+
+| Parameter           | Value          |
+| ------------------- | -------------- |
+| Cycles per patch    | 27 (optimized) |
+| Cycles per image    | 390            |
+| Bytes per image     | 336            |
+| Crossover frequency | 1190 Hz        |
+| Max throughput      | 3.05 images/s  |
+| MAC utilization     | 58%            |
+
+### 8.2 Key Design Decisions
+
+1. **Dual-port SRAM**: Enables simultaneous read (to MACs) and write (from memory)
+2. **Double-buffering**: Load next batch while computing current batch
+3. **Next-patch prefetch**: Start loading next patch during BATCH2
+4. **Tree reduction**: 3 cycles instead of 9 using parallel adders
+5. **Streaming pixels**: Cannot store full image, reload per patch
+
+### 8.3 Remaining Optimization Opportunities
+
+1. **Row caching**: If adjacent patches share rows, cache and reuse
+2. **Weight caching**: Store weights persistently if same kernel used
+3. **Wider local memory interface**: 2+ bytes/cycle would reduce fill time
+4. **Inter-patch pipelining**: Start next patch while writing current output
+
+
+# Convolution Accelerator Timing Diagram
+
+## Single Patch Execution (27 cycles)
+
+```
+Cycle    0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15  16  17  18  19  20  21  22  23  24  25  26
+         │   │   │   │   │   │   │   │   │   │   │   │   │   │   │   │   │   │   │   │   │   │   │   │   │   │   │
+         ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼   ▼
+        ┌───┬───┬───┬───────────────────────────────────────────────────────────────────────────────────────────────┐
+CLK     │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │ ↑ │
+        └───┴───┴───┴───────────────────────────────────────────────────────────────────────────────────────────────┘
+
+        ┌───────────┬───────────────────────────────────────────────────────────────────────────────────────────────┐
+PHASE   │   FILL    │         BATCH 0         │         BATCH 1         │         BATCH 2         │ REDUCE│ WRITE │
+        └───────────┴───────────────────────────────────────────────────────────────────────────────────────────────┘
+
+        ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+        │           ┌───────────────────────────────────────────────────────────────────────────────┐               │
+SRAM    │___________│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│_______________│
+PORT_A  │   idle    │                              READ TO MACs                                     │     idle      │
+(READ)  │           └───────────────────────────────────────────────────────────────────────────────┘               │
+        └───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+        ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+        │┌──────────────────────────────────────────────────────────────────────────────────────────┐               │
+SRAM    ││▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│_______________│
+PORT_B  ││ w0-3│ w4-7│w8,a0│ a3-6│ a7-8│     │     │     │     │     │     │     │     │     │NEXT │NEXT │NEXT │   │
+(WRITE) │└─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┴─────┴───┘│
+        └───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+        ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+        │           ┌─────┐                 ┌─────┐                 ┌─────┐                                         │
+MAC0    │___________│ LD  │  MUL  │   ADD   │ LD  │  MUL  │   ADD   │ LD  │  MUL  │   ADD   │_______________________│
+        │   idle    └─────┴───────┴─────────┴─────┴───────┴─────────┴─────┴───────┴─────────┘         idle          │
+        └───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+        ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+        │           ┌─────┐                 ┌─────┐                                         ┌───────────┐           │
+MAC1    │___________│ LD  │  MUL  │   ADD   │ LD  │  MUL  │   ADD   │_______________________│  REDUCE   │___________│
+        │   idle    └─────┴───────┴─────────┴─────┴───────┴─────────┘         idle          └───────────┘   idle    │
+        └───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+        ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+        │           ┌─────┐                 ┌─────┐                                         ┌───────────┐           │
+MAC2    │___________│ LD  │  MUL  │   ADD   │ LD  │  MUL  │   ADD   │_______________________│  REDUCE   │___________│
+        │   idle    └─────┴───────┴─────────┴─────┴───────┴─────────┘         idle          └───────────┘   idle    │
+        └───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+        ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+        │           ┌─────┐                 ┌─────┐                                         ┌───────────┐           │
+MAC3    │___________│ LD  │  MUL  │   ADD   │ LD  │  MUL  │   ADD   │_______________________│  REDUCE   │___________│
+        │   idle    └─────┴───────┴─────────┴─────┴───────┴─────────┘         idle          └───────────┘   idle    │
+        └───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+        ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+        │                                                                                               ┌─────────┐ │
+MEM_WR  │___________________________________________________________________________________________────│ WR OUT  │_│
+        │                                           idle                                                └─────────┘ │
+        └───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+        ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+        │           ┌─────────────────────────────────────────────────────────────────────────────────┐             │
+ACC0    │___________│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│_____________│
+        │    0      │  p0   │  p0   │  p0+p4  │ p0+p4 │p0+p4+p8│                                       │     0       │
+        └───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+        ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+        │           ┌─────────────────────────────────────────────────────────────────────────────────────────────┐ │
+ACC1    │___________│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│_│
+        │    0      │  p1   │  p1   │  p1+p5  │ p1+p5 │        │  ACC0+ACC1  │ +ACC2 │ +ACC3 │  FINAL  │             │
+        └───────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+## Legend
+
+```
+▓▓▓  = Active/Valid data
+___  = Idle/Invalid
+LD   = Load operands from SRAM
+MUL  = Multiply (2 cycles pipelined)
+ADD  = Accumulate (3 cycles)
+NEXT = Prefetch next patch data
+```
+
+## Detailed Pipeline Breakdown
+
+```
+                    BATCH 0                      BATCH 1                      BATCH 2
+              ┌─────────────────────┐      ┌─────────────────────┐      ┌─────────────────────┐
+              │  LD │ M1 │ M2 │ A1 │ A2 │ A3 │  LD │ M1 │ M2 │ A1 │ A2 │ A3 │  LD │ M1 │ M2 │ A1 │ A2 │ A3 │
+              └─────────────────────┘      └─────────────────────┘      └─────────────────────┘
+Cycle:           3    4    5    6    7    8    9   10   11   12   13   14   15   16   17   18   19   20
+ 
+MAC0 ops:       w0   ───MUL───  ────────ADD────────  w4   ───MUL───  ────────ADD────────  w8   ───MUL───  ────────ADD────────
+                ×                                    ×                                    ×
+                a0                                   a4                                   a8
+
+MAC1 ops:       w1×a1 ─────────────────────────────  w5×a5 ─────────────────────────────  (idle, used for reduce)
+
+MAC2 ops:       w2×a2 ─────────────────────────────  w6×a6 ─────────────────────────────  (idle, used for reduce)
+
+MAC3 ops:       w3×a3 ─────────────────────────────  w7×a7 ─────────────────────────────  (idle, used for reduce)
+```
+
+## Reduction Tree (Cycles 21-23)
+
+```
+Cycle 21:
+              ┌───────┐     ┌───────┐
+    ACC0 ────►│       │     │       │◄──── ACC2
+              │ ADD   │     │ ADD   │
+    ACC1 ────►│       │     │       │◄──── ACC3
+              └───┬───┘     └───┬───┘
+                  │             │
+                temp0         temp1
+
+Cycle 22:
+              ┌───────┐
+   temp0 ────►│       │
+              │ ADD   │────► temp2
+   temp1 ────►│       │
+              └───────┘
+
+Cycle 23:
+              (pipeline flush)
+              temp2 = FINAL RESULT
+```
+
+## Multi-Patch Pipeline (Patches 1-3)
+
+```
+Cycle:  0  1  2  3  4  5  6  7  8  9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 ...
+        │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │  │
+        ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼  ▼
+
+        ┌───────────────────────────────────────────────────────────────────────────────────────────
+PATCH1  │FILL│    BATCH0     │    BATCH1     │    BATCH2     │ RED │WRITE│
+        │▓▓▓▓│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│▓▓▓▓▓│▓▓▓▓▓│
+        └───────────────────────────────────────────────────────────────────────────────────────────
+
+        ┌───────────────────────────────────────────────────────────────────────────────────────────
+PATCH2  │                              │PREFETCH DURING P1 B2│    BATCH0     │    BATCH1     │ ...
+        │__________________________────│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓│
+        └───────────────────────────────────────────────────────────────────────────────────────────
+
+        ┌───────────────────────────────────────────────────────────────────────────────────────────
+SRAM    │ P1 │ P1  │ P1  │ P1  │ P1  │ P1  │ P2  │ P2  │ P2  │ P2  │ P2  │ P2  │ P3  │ P3  │ ...
+WRITE   │w0-3│w4-7 │w8,a │a3-6 │a7-8 │NEXT │w0-3 │w4-7 │w8,a │a3-6 │a7-8 │NEXT │w0-3 │w4-7 │
+        └───────────────────────────────────────────────────────────────────────────────────────────
+
+Key: P1 = Patch 1 data, P2 = Patch 2 data, NEXT = Next patch prefetch
+```
+
+## Summary
+
+| Signal  | Cycles 0-2 | Cycles 3-8 | Cycles 9-14 | Cycles 15-20 | Cycles 21-23 | Cycles 24-26 |
+| ------- | ---------- | ---------- | ----------- | ------------ | ------------ | ------------ |
+| SRAM RD | idle       | active     | active      | active       | idle         | idle         |
+| SRAM WR | active     | active     | active      | active       | idle         | idle         |
+| MAC0    | idle       | MUL+ADD    | MUL+ADD     | MUL+ADD      | idle         | idle         |
+| MAC1    | idle       | MUL+ADD    | MUL+ADD     | idle         | REDUCE       | idle         |
+| MAC2    | idle       | MUL+ADD    | MUL+ADD     | idle         | REDUCE       | idle         |
+| MAC3    | idle       | MUL+ADD    | MUL+ADD     | idle         | REDUCE       | idle         |
+| MEM_WR  | idle       | idle       | idle        | idle         | idle         | active       |

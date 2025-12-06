@@ -59,9 +59,9 @@
   - Signed multiplication using Booth encoding or similar
   - Two's complement representation
   - 20-bit accumulator sufficient for worst-case:
-    * Max per product: 127 × 127 = 16,129
-    * Max 3 products in ACC0: 3 × 16,129 = 48,387
-    * Fits in 20 bits (max = 524,288)
+    * Max value of data per product: 127 × 127 = 16,129
+    * Max value of 3 products in ACC0: 3 × 16,129 = 48,387
+    * Fits in 20 bits (max value of 20 bits = 524,288)
   - No saturation needed for integer operations
 
 2.4 Control Assumptions

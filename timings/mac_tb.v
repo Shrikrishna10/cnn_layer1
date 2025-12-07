@@ -2,51 +2,45 @@
 
 module tb;
 
-    // ---- Signals you care about in the waveform ----
+    // Signals you care about
     reg         clk;
     reg         rst;
     reg  [15:0] in_a;
     reg  [15:0] in_w;
     reg  [19:0] in_ad;
-    reg         sel_acc;     // 0 = use 0, 1 = feedback ACC
-    reg         sel_bypass;  // 0 = MAC (mul), 1 = bypass mul and use in_ad
+    reg         sel_acc;     // 0 = clear, 1 = feedback acc
+    reg         sel_bypass;  // 0 = MAC, 1 = ADD-only
 
     wire [19:0] out_mac;
     wire [19:0] out_add;
 
-    // internal control for starting ops
-    reg         in_valid;
-    reg         add_valid;
+    // internal valid (not dumped)
+    reg         valid;
 
-    // DUT connection
-    wire [19:0] acc_out;
-
-    pipelined_mac dut (
-        .clk      (clk),
-        .rst      (rst),
-        .mode_add (sel_bypass), // ADD-only / bypass control
-        .mux_sel  (sel_acc),    // ACC feedback vs zero
-        .in_valid (in_valid),
-        .add_valid(add_valid),
-        .a        (in_a),
-        .b        (in_w),
-        .add_in   (in_ad),
-        .acc_out  (acc_out)
+    // DUT
+    mac_core dut (
+        .clk       (clk),
+        .rst       (rst),
+        .sel_acc   (sel_acc),
+        .sel_bypass(sel_bypass),
+        .valid     (valid),
+        .in_a      (in_a),
+        .in_w      (in_w),
+        .in_ad     (in_ad),
+        .acc_out   (out_mac)   // main output
     );
 
-    // For your diagram, both out_mac and out_add just show acc_out
-    assign out_mac = acc_out;
-    assign out_add = acc_out;
+    // For your diagram, out_add is the same value (post-ADD)
+    assign out_add = out_mac;
 
-    // ---------------- Clock ----------------
+    // Clock: 10 ns period
     initial begin
         clk = 0;
-        forever #5 clk = ~clk;   // 10 ns period
+        forever #5 clk = ~clk;
     end
 
     integer cycle;
 
-    // ---------------- Stimulus ----------------
     initial begin
         $dumpfile("mac_timing.vcd");
         $dumpvars(0,
@@ -68,8 +62,7 @@ module tb;
         in_ad      = 0;
         sel_acc    = 0;
         sel_bypass = 0;
-        in_valid   = 0;
-        add_valid  = 0;
+        valid      = 0;
         cycle      = -1;
 
         // 15 cycles total
@@ -78,61 +71,46 @@ module tb;
             cycle = cycle + 1;
 
             case (cycle)
-                // 0–1: reset asserted
+                // 0–1 : reset
                 0,1: begin
-                    rst        <= 1;
-                    sel_acc    <= 0;
-                    sel_bypass <= 0;
-                    in_valid   <= 0;
-                    add_valid  <= 0;
+                    rst   <= 1;
+                    valid <= 0;
                 end
 
-                // 2: release reset
+                // 2 : release reset
                 2: begin
                     rst <= 0;
                 end
 
-                // -------- ONE MAC OP: mul+add --------
-                // Start at cycle 3: ACC = 0 + (3 * 5)
+                // -------- MAC: 3 * 5, 5-cycle delay --------
+                // start at cycle 3
                 3: begin
-                    sel_bypass <= 0;      // MAC mode (use multiplier)
-                    sel_acc    <= 0;      // ACC source = 0 (clear)
+                    sel_bypass <= 0;   // use in_a * in_w
+                    sel_acc    <= 0;   // start from 0
                     in_a       <= 16'd3;
                     in_w       <= 16'd5;
-                    in_valid   <= 1;
+                    valid      <= 1;
                 end
-
                 4: begin
-                    in_valid <= 0;        // let pipeline run
+                    valid <= 0;        // one-cycle pulse
                 end
+                // result (15) will appear 5 cycles after start, at cycle 8
 
-                // 5–8: just pipeline latency for MAC
-
-                // -------- ONE ADD-ONLY OP --------
-                // Start at cycle 9: ACC_new = ACC + 7
+                // -------- ADD-only: +7, 3-cycle delay --------
+                // start at cycle 9
                 9: begin
-                    sel_bypass <= 1;      // bypass mul, use in_ad
-                    sel_acc    <= 1;      // ACC feedback
+                    sel_bypass <= 1;   // bypass mul, use in_ad
+                    sel_acc    <= 1;   // accumulate on 15
                     in_ad      <= 20'd7;
-                    add_valid  <= 1;
+                    valid      <= 1;
                 end
-
                 10: begin
-                    add_valid <= 0;       // let ADD-only pipeline run
+                    valid <= 0;
                 end
+                // result (22) will appear 3 cycles after start, at cycle 12
 
-                // 11: pipeline latency for ADD-only
-
-                // -------- small reset window --------
-                12: rst <= 1;
-                13: rst <= 0;
-
-                // 14: idle
-                14: begin
-                    sel_bypass <= 0;
-                    sel_acc    <= 0;
-                    in_valid   <= 0;
-                    add_valid  <= 0;
+                default: begin
+                    // idle
                 end
             endcase
         end

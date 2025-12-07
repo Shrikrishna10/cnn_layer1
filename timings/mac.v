@@ -1,85 +1,68 @@
 `timescale 1ns/1ps
 
 //======================================================
-//  Pipelined MAC (DUT)
-//    - 16x16 multiplier, 2-cycle pipeline
-//    - 20-bit adder, 3-cycle pipeline
-//    - mode_add = 0 : MAC (mul+add)
-//    - mode_add = 1 : ADD-only (bypass mul, use add_in)
-//    - acc_out always shows current accumulated value
+// Simple delayed MAC core for timing diagrams
+//  - Uses * and + operators
+//  - 5-cycle delay for MAC (mul+add)
+//  - 3-cycle delay for ADD-only (bypass multiplier)
+//  - sel_bypass = 0 -> use in_a * in_w
+//  - sel_bypass = 1 -> use in_ad
+//  - sel_acc    = 0 -> start from 0
+//  - sel_acc    = 1 -> accumulate on previous acc_out
 //======================================================
-module pipelined_mac (
+module mac_core (
     input         clk,
-    input         rst,        // active high
+    input         rst,         // active high
 
     // control
-    input         mode_add,   // 0 = MAC, 1 = ADD-only (bypass mul)
-    input         mux_sel,    // 0 = use 0, 1 = use ACC feedback
-    input         in_valid,   // start a MAC operation
-    input         add_valid,  // start an ADD-only operation
+    input         sel_acc,     // 0 = clear, 1 = feedback acc_out
+    input         sel_bypass,  // 0 = MAC (use product), 1 = ADD-only (use in_ad)
+    input         valid,       // one-cycle start pulse
 
     // data
-    input  [15:0] a,
-    input  [15:0] b,
-    input  [19:0] add_in,
+    input  [15:0] in_a,
+    input  [15:0] in_w,
+    input  [19:0] in_ad,
 
-    // output: current accumulated value
-    output [19:0] acc_out
+    // output
+    output reg [19:0] acc_out  // current accumulated value
 );
 
-    // ---------------- Multiplier: 2-cycle pipeline ----------------
-    reg [15:0] a_reg, b_reg;
-    reg [31:0] mul_s1, mul_s2;
-
-    // ---------------- Adder: 3-cycle pipeline --------------------
-    reg [19:0] add_s1, add_s2, add_s3;
-
-    // ---------------- Accumulator + valid pipelines --------------
-    reg [19:0] acc;
-    reg [4:0]  mac_valid_pipe;   // 5-cycle MAC latency
-    reg [2:0]  add_valid_pipe;   // 3-cycle ADD-only latency
-
-    assign acc_out = acc;
-
-    // Operand into adder: either mul result or external addend
-    wire [19:0] op_sel  = mode_add ? add_in : mul_s2[19:0];
-
-    // ACC feedback vs 0
-    wire [19:0] acc_src = mux_sel ? acc : 20'd0;
+    reg        busy;
+    reg [2:0]  cnt;           // enough for max 5 cycles
+    reg [19:0] base_acc;
+    reg [19:0] pending_add;
 
     always @(posedge clk) begin
         if (rst) begin
-            a_reg          <= 16'd0;
-            b_reg          <= 16'd0;
-            mul_s1         <= 32'd0;
-            mul_s2         <= 32'd0;
-            add_s1         <= 20'd0;
-            add_s2         <= 20'd0;
-            add_s3         <= 20'd0;
-            acc            <= 20'd0;
-            mac_valid_pipe <= 5'd0;
-            add_valid_pipe <= 3'd0;
+            acc_out     <= 20'd0;
+            busy        <= 1'b0;
+            cnt         <= 3'd0;
+            base_acc    <= 20'd0;
+            pending_add <= 20'd0;
         end else begin
-            // shift valid bits
-            mac_valid_pipe <= {mac_valid_pipe[3:0], in_valid};
-            add_valid_pipe <= {add_valid_pipe[1:0], add_valid};
-
-            // multiplier pipeline (2 cycles)
-            if (in_valid) begin
-                a_reg <= a;
-                b_reg <= b;
-            end
-            mul_s1 <= a_reg * b_reg;
-            mul_s2 <= mul_s1;
-
-            // adder pipeline (3 cycles)
-            add_s1 <= acc_src + op_sel;
-            add_s2 <= add_s1;
-            add_s3 <= add_s2;
-
-            // write ACC only when a valid result emerges
-            if (mac_valid_pipe[4] || add_valid_pipe[2]) begin
-                acc <= add_s3;
+            // start a new operation if not busy
+            if (valid && !busy) begin
+                busy     <= 1'b1;
+                base_acc <= sel_acc ? acc_out : 20'd0;
+                if (sel_bypass) begin
+                    // ADD-only: ACC + in_ad, 3-cycle delay
+                    pending_add <= in_ad;
+                    cnt         <= 3'd3;
+                end else begin
+                    // MAC: ACC + in_a * in_w, 5-cycle delay
+                    pending_add <= in_a * in_w;
+                    cnt         <= 3'd5;
+                end
+            end else if (busy) begin
+                if (cnt > 3'd1) begin
+                    cnt <= cnt - 3'd1;
+                end else if (cnt == 3'd1) begin
+                    // final cycle: update accumulator
+                    acc_out <= base_acc + pending_add;
+                    cnt     <= 3'd0;
+                    busy    <= 1'b0;
+                end
             end
         end
     end

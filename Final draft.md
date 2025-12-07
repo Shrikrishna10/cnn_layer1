@@ -11,7 +11,6 @@
 - Each MAC: 8-bit × 8-bit signed integer multiplication
 - 16 bytes on-chip SRAM (dual-port, each port 32-bit = 4 bytes/cycle)
 - External memory bandwidth: 1 KB/s (1024 bytes/second)
-- Local memory to SRAM transfer: 1 byte per cycle
 - No additional hardware (reuse MAC adders for reduction)
 ## 1.3 Design Goals
 - Maximize throughput (images/second)
@@ -26,18 +25,15 @@
 - Output: 20-bit signed integers (3 bytes packed)
 
 # 2. Architecture Assumptions 
-
 ## 2.1 Memory assumptions
-
 ### 2.1.1 Memory Assumptions
   - External memory is byte-addressable
   - Row-major storage for input image
   - 8-byte parallel read capability from SRAM
-  - Input image loaded once, 3×3 windows extracted in hardware
   - Weight read for every patch
 ### 2.1.2 Dual-Port Access
-- Port A: 32-bit read (4 bytes simultaneously)
-- Port B: 32-bit write (4 bytes simultaneously)
+- Port A: 32-bit read/write (4 bytes simultaneously)
+- Port B: 32-bit read/write (4 bytes simultaneously)
 - Both ports can operate in same cycle
 - A dual-port SRAM provides **two independent address ports**, NOT two bytes from one port:
 ```
@@ -48,35 +44,17 @@
 | Bytes 0-7        | Bytes 8-15       |
 +------------------+------------------+
 ```
-### 2.1.3 Memory Hierarchy
-```
-External Memory (unlimited)
-        │
-        │ 1 byte/cycle (local memory interface)
-        ▼
-Local Memory Buffer (staging)
-        │
-        │ 1 byte/cycle to SRAM
-        ▼
-On-chip SRAM (16 bytes, dual-port)
-        │
-        │ 4 bytes/cycle per port
-        ▼
-MAC Registers (4 × 2 = 8 bytes)
-```
-### 2.1.4 Data Loading Strategy
+### 2.1.3 Data Loading Strategy
 Since SRAM (16 bytes) cannot hold entire image (64 bytes), data is **streamed**:
 1. **Image pixels**: Loaded on-demand per patch, not stored entirely
-2. **Weights**: 9 bytes loaded per patch (fits in SRAM with pixels)
+2. **Weights**: fetched per batch 4 + 4 + 1 bytes = 9 bytes
 3. **Working set per patch**: 9 weights + 9 pixels = 18 bytes
-   - Exceeds 16-byte SRAM → requires **double-buffering**
-**Double-Buffer Strategy**:
-- While MACs compute with Bank A data, load next data into Bank B
-- Swap roles each batch
+   - Exceeds 16-byte SRAM 
+   - 3 batches, 8 bytes per batch, no full 18B stored at once
 ## 2.2 Timing Assumptions
   - Multiplier latency: 2 cycles (pipelined)
   - Adder latency: 3 cycles (matching FP32 timing)
-  - SRAM access: 1 byte of data read/write per cycle
+  - SRAM access: up to 8 bytes/cycle aggregate (4 bytes per port × 2 ports).
   - Register load: Included in operation timing
 ## 2.3 Arithmetic Assumptions
   - Signed multiplication using Booth encoding or similar
@@ -84,7 +62,7 @@ Since SRAM (16 bytes) cannot hold entire image (64 bytes), data is **streamed**:
   - 20-bit accumulator sufficient for worst-case:
     * Max value of data per product: 127 × 127 = 16,129
     * Max value of 3 products in ACC0: 3 × 16,129 = 48,387
-    * Fits in 20 bits (max value of 20 bits = 524,288)
+    * Fits in 20 bits (max value of 20 bits signed = 524,287)
   - No saturation needed for integer operations
 ## 2.4 Control Assumptions
   - Synchronous design, single clock domain
@@ -130,7 +108,7 @@ Since SRAM (16 bytes) cannot hold entire image (64 bytes), data is **streamed**:
 |    22 |  Red  | (cycle 2/3)          | +     | idle  | idle  | idle  |                                            |
 |    23 |  Red  | (cycle 3/3)          | +     | idle  | idle  | idle  | Final sum ready                            |
 
-**Result:** Final sum in ACC1 (or ACC3 depending on design choice).  
+**Result:** Final sum in ACC0   
 Can write to output FIFO / memory in cycle 24.
   
 **Key:** `×` = Multiply in progress · `+` = Add/accumulate in progress · `LOAD` = Loading external ACC value for ADD-only mode · `idle` = MAC not active
@@ -167,32 +145,9 @@ Clock frequency:
   - Switches MAC modes (MAC vs ADD-only)
   - Handles SRAM addressing
   - Coordinates external memory access
+![[Pasted image 20251207071813.png]]
 
-  High-level FSM states:
-  ┌──────────┐
-  │   IDLE        │
-  └────┬─────┘
-       ↓
-  ┌───────────┐
-  │LOAD_WTPX │ ← Load weights and image
-  └────┬──────┘
-       ↓
-  ┌──────────┐
-  │ COMPUTE │ ← Process patches (18 cycles)
-  │  BATCH      │
-  └────┬─────┘
-       ↓
-  ┌──────────┐
-  │ REDUCE    │ ← Combine ACCs (6 cycles, overlapped)
-  └────┬─────┘
-       ↓
-  ┌──────────┐
-  │  OUTPUT   │ ← Write result
-  └────┬─────┘
-       ↓
-  (Repeat for 16 patches)
-
-## 4.5 Data Flow
+  ## 4.5 Data Flow
   Explain step-by-step with arrows:
   1. External memory → SRAM (weights + pixels)
   2. SRAM → MAC input registers
@@ -203,7 +158,7 @@ Clock frequency:
   7. Final ACC → Output
 ## 4.6 Critical Signals
   List main control signals:
-  - clk: System clock (~3.25 kHz)
+  - clk: System clock (~1.5 kHz)
   - reset: Global reset
   - mode[1:0]: MAC operation mode
   - mux_sel_G[3:0]: MUX select for each MAC

@@ -1,17 +1,19 @@
 `timescale 1ns/1ps
 
-// =======================================================
+//======================================================
 //  Pipelined MAC (DUT)
 //    - 16x16 multiplier, 2-cycle pipeline
 //    - 20-bit adder, 3-cycle pipeline
-//    - ADD-only mode bypasses multiplier
-// =======================================================
+//    - mode_add = 0 : MAC (mul+add)
+//    - mode_add = 1 : ADD-only (bypass mul, use add_in)
+//    - acc_out always shows current accumulated value
+//======================================================
 module pipelined_mac (
     input         clk,
     input         rst,        // active high
 
     // control
-    input         mode_add,   // 0 = MAC (mul+add), 1 = ADD-only
+    input         mode_add,   // 0 = MAC, 1 = ADD-only (bypass mul)
     input         mux_sel,    // 0 = use 0, 1 = use ACC feedback
     input         in_valid,   // start a MAC operation
     input         add_valid,  // start an ADD-only operation
@@ -21,9 +23,8 @@ module pipelined_mac (
     input  [15:0] b,
     input  [19:0] add_in,
 
-    output reg [19:0] acc,          // accumulate register
-    output reg        mac_done,     // 1 when MAC result writes ACC
-    output reg        add_done      // 1 when ADD result writes ACC
+    // output: current accumulated value
+    output [19:0] acc_out
 );
 
     // ---------------- Multiplier: 2-cycle pipeline ----------------
@@ -33,15 +34,18 @@ module pipelined_mac (
     // ---------------- Adder: 3-cycle pipeline --------------------
     reg [19:0] add_s1, add_s2, add_s3;
 
-    // Valid pipelines
-    reg [4:0] mac_valid_pipe;   // 5-cycle MAC latency
-    reg [2:0] add_valid_pipe;   // 3-cycle ADD-only latency
+    // ---------------- Accumulator + valid pipelines --------------
+    reg [19:0] acc;
+    reg [4:0]  mac_valid_pipe;   // 5-cycle MAC latency
+    reg [2:0]  add_valid_pipe;   // 3-cycle ADD-only latency
 
-    // Operand select going into adder
-    wire [19:0] op_sel    = mode_add ? add_in : mul_s2[19:0];
+    assign acc_out = acc;
 
-    // ACC feedback or zero
-    wire [19:0] acc_src   = mux_sel ? acc : 20'd0;
+    // Operand into adder: either mul result or external addend
+    wire [19:0] op_sel  = mode_add ? add_in : mul_s2[19:0];
+
+    // ACC feedback vs 0
+    wire [19:0] acc_src = mux_sel ? acc : 20'd0;
 
     always @(posedge clk) begin
         if (rst) begin
@@ -55,10 +59,8 @@ module pipelined_mac (
             acc            <= 20'd0;
             mac_valid_pipe <= 5'd0;
             add_valid_pipe <= 3'd0;
-            mac_done       <= 1'b0;
-            add_done       <= 1'b0;
         end else begin
-            // valid shift registers
+            // shift valid bits
             mac_valid_pipe <= {mac_valid_pipe[3:0], in_valid};
             add_valid_pipe <= {add_valid_pipe[1:0], add_valid};
 
@@ -75,11 +77,7 @@ module pipelined_mac (
             add_s2 <= add_s1;
             add_s3 <= add_s2;
 
-            // pop valid bits
-            mac_done <= mac_valid_pipe[4];
-            add_done <= add_valid_pipe[2];
-
-            // write ACC
+            // write ACC only when a valid result emerges
             if (mac_valid_pipe[4] || add_valid_pipe[2]) begin
                 acc <= add_s3;
             end

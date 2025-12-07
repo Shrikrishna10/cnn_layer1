@@ -2,40 +2,46 @@
 
 module tb;
 
+    // ---- Signals you care about in the waveform ----
     reg         clk;
     reg         rst;
-    reg         mode_add;
-    reg         mux_sel;
+    reg  [15:0] in_a;
+    reg  [15:0] in_w;
+    reg  [19:0] in_ad;
+    reg         sel_acc;     // 0 = use 0, 1 = feedback ACC
+    reg         sel_bypass;  // 0 = MAC (mul), 1 = bypass mul and use in_ad
+
+    wire [19:0] out_mac;
+    wire [19:0] out_add;
+
+    // internal control for starting ops
     reg         in_valid;
     reg         add_valid;
-    reg  [15:0] a;
-    reg  [15:0] b;
-    reg  [19:0] add_in;
 
-    wire [19:0] acc;
-    wire        mac_done;
-    wire        add_done;
+    // DUT connection
+    wire [19:0] acc_out;
 
-    // ---------------- Instantiate DUT ----------------
     pipelined_mac dut (
-        .clk(clk),
-        .rst(rst),
-        .mode_add(mode_add),
-        .mux_sel(mux_sel),
-        .in_valid(in_valid),
+        .clk      (clk),
+        .rst      (rst),
+        .mode_add (sel_bypass), // ADD-only / bypass control
+        .mux_sel  (sel_acc),    // ACC feedback vs zero
+        .in_valid (in_valid),
         .add_valid(add_valid),
-        .a(a),
-        .b(b),
-        .add_in(add_in),
-        .acc(acc),
-        .mac_done(mac_done),
-        .add_done(add_done)
+        .a        (in_a),
+        .b        (in_w),
+        .add_in   (in_ad),
+        .acc_out  (acc_out)
     );
+
+    // For your diagram, both out_mac and out_add just show acc_out
+    assign out_mac = acc_out;
+    assign out_add = acc_out;
 
     // ---------------- Clock ----------------
     initial begin
         clk = 0;
-        forever #5 clk = ~clk;   // 10 ns clock
+        forever #5 clk = ~clk;   // 10 ns period
     end
 
     integer cycle;
@@ -43,75 +49,90 @@ module tb;
     // ---------------- Stimulus ----------------
     initial begin
         $dumpfile("mac_timing.vcd");
-        $dumpvars(0, tb);
+        $dumpvars(0,
+            clk,
+            rst,
+            in_a,
+            in_w,
+            in_ad,
+            sel_acc,
+            sel_bypass,
+            out_mac,
+            out_add
+        );
 
         // defaults
-        rst       = 1;
-        mode_add  = 0;
-        mux_sel   = 0;
-        in_valid  = 0;
-        add_valid = 0;
-        a         = 0;
-        b         = 0;
-        add_in    = 0;
-        cycle     = -1;
+        rst        = 1;
+        in_a       = 0;
+        in_w       = 0;
+        in_ad      = 0;
+        sel_acc    = 0;
+        sel_bypass = 0;
+        in_valid   = 0;
+        add_valid  = 0;
+        cycle      = -1;
 
+        // 15 cycles total
         repeat (15) begin
             @(posedge clk);
             cycle = cycle + 1;
 
             case (cycle)
-                // 0–1 : reset high
+                // 0–1: reset asserted
                 0,1: begin
-                    rst       <= 1;
-                    in_valid  <= 0;
-                    add_valid <= 0;
-                    mux_sel   <= 0;
-                    mode_add  <= 0;
+                    rst        <= 1;
+                    sel_acc    <= 0;
+                    sel_bypass <= 0;
+                    in_valid   <= 0;
+                    add_valid  <= 0;
                 end
 
-                // 2 : release reset
+                // 2: release reset
                 2: begin
                     rst <= 0;
                 end
 
-                // -------- MAC OPERATION (mul+add) --------
-                // Start MAC at cycle 3: ACC = (3 * 5)
+                // -------- ONE MAC OP: mul+add --------
+                // Start at cycle 3: ACC = 0 + (3 * 5)
                 3: begin
-                    mode_add  <= 0;     // MAC mode
-                    mux_sel   <= 0;     // ACC reset
-                    in_valid  <= 1;
-                    a         <= 16'd3;
-                    b         <= 16'd5;
+                    sel_bypass <= 0;      // MAC mode (use multiplier)
+                    sel_acc    <= 0;      // ACC source = 0 (clear)
+                    in_a       <= 16'd3;
+                    in_w       <= 16'd5;
+                    in_valid   <= 1;
                 end
 
-                4: in_valid <= 0;       // pipelining continues
+                4: begin
+                    in_valid <= 0;        // let pipeline run
+                end
 
-                // 5–8: internal pipeline running (mult+adder)
-                5,6,7,8: begin end
+                // 5–8: just pipeline latency for MAC
 
-                // -------- ADD-ONLY OP (ACC + 7) --------
+                // -------- ONE ADD-ONLY OP --------
+                // Start at cycle 9: ACC_new = ACC + 7
                 9: begin
-                    mode_add  <= 1;
-                    mux_sel   <= 1;
-                    add_in    <= 20'd7;
-                    add_valid <= 1;
+                    sel_bypass <= 1;      // bypass mul, use in_ad
+                    sel_acc    <= 1;      // ACC feedback
+                    in_ad      <= 20'd7;
+                    add_valid  <= 1;
                 end
 
-                10: add_valid <= 0;
+                10: begin
+                    add_valid <= 0;       // let ADD-only pipeline run
+                end
 
-                // pipeline 11
+                // 11: pipeline latency for ADD-only
 
-                // -------- small reset section --------
+                // -------- small reset window --------
                 12: rst <= 1;
                 13: rst <= 0;
 
                 // 14: idle
                 14: begin
-                    mode_add  <= 0;
-                    mux_sel   <= 0;
-                    in_valid  <= 0;
-                    add_valid <= 0;
+                    sel_bypass <= 0;
+                    sel_acc    <= 0;
+                    in_valid   <= 0;
+                    add_valid  <= 0;
                 end
             endcase
         end

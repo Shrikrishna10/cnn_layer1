@@ -1,5 +1,5 @@
 $date
-	Sun Dec  7 05:44:49 2025
+	Sun Dec  7 11:43:44 2025
 $end
 $version
 	Icarus Verilog
@@ -8,220 +8,116 @@ $timescale
 	1ps
 $end
 $scope module tb $end
-$var wire 1 ! mac_done $end
-$var wire 1 " add_done $end
-$var wire 20 # acc [19:0] $end
-$var reg 16 $ a [15:0] $end
-$var reg 20 % add_in [19:0] $end
-$var reg 1 & add_valid $end
-$var reg 16 ' b [15:0] $end
-$var reg 1 ( clk $end
-$var reg 1 ) in_valid $end
-$var reg 1 * mode_add $end
-$var reg 1 + mux_sel $end
-$var reg 1 , rst $end
-$var integer 32 - cycle [31:0] $end
-$scope module dut $end
-$var wire 16 . a [15:0] $end
-$var wire 20 / add_in [19:0] $end
-$var wire 1 & add_valid $end
-$var wire 16 0 b [15:0] $end
-$var wire 1 ( clk $end
-$var wire 1 ) in_valid $end
-$var wire 1 * mode_add $end
-$var wire 1 + mux_sel $end
-$var wire 1 , rst $end
-$var wire 20 1 op_sel [19:0] $end
-$var wire 20 2 acc_src [19:0] $end
-$var reg 16 3 a_reg [15:0] $end
-$var reg 20 4 acc [19:0] $end
-$var reg 1 " add_done $end
-$var reg 20 5 add_s1 [19:0] $end
-$var reg 20 6 add_s2 [19:0] $end
-$var reg 20 7 add_s3 [19:0] $end
-$var reg 3 8 add_valid_pipe [2:0] $end
-$var reg 16 9 b_reg [15:0] $end
-$var reg 1 ! mac_done $end
-$var reg 5 : mac_valid_pipe [4:0] $end
-$var reg 32 ; mul_s1 [31:0] $end
-$var reg 32 < mul_s2 [31:0] $end
+$var reg 1 ! clk $end
 $upscope $end
+$scope module tb $end
+$var reg 1 " rst $end
+$upscope $end
+$scope module tb $end
+$var reg 16 # in_a [15:0] $end
+$upscope $end
+$scope module tb $end
+$var reg 16 $ in_w [15:0] $end
+$upscope $end
+$scope module tb $end
+$var reg 20 % in_ad [19:0] $end
+$upscope $end
+$scope module tb $end
+$var reg 1 & sel_acc $end
+$upscope $end
+$scope module tb $end
+$var reg 1 ' sel_bypass $end
+$upscope $end
+$scope module tb $end
+$var wire 20 ( out_mac [19:0] $end
+$upscope $end
+$scope module tb $end
+$var wire 20 ) out_add [19:0] $end
 $upscope $end
 $enddefinitions $end
-$comment Show the parameter values. $end
-$dumpall
-$end
 #0
 $dumpvars
-bx <
-bx ;
-bx :
-bx 9
-bx 8
-bx 7
-bx 6
-bx 5
-bx 4
-bx 3
-b0 2
-bx 1
-b0 0
-b0 /
-b0 .
-b11111111111111111111111111111111 -
-1,
-0+
-0*
-0)
-0(
-b0 '
+bx )
+bx (
+0'
 0&
 b0 %
 b0 $
-bx #
-x"
-x!
+b0 #
+1"
+0!
 $end
 #5000
-b0 1
-0"
-0!
-b0 8
-b0 :
-b0 #
-b0 4
-b0 7
-b0 6
-b0 5
-b0 <
-b0 ;
-b0 9
-b0 3
-b0 -
-1(
-#10000
-0(
-#15000
-b1 -
-1(
-#20000
-0(
-#25000
-0,
-b10 -
-1(
-#30000
-0(
-#35000
-b101 '
-b101 0
-b11 $
-b11 .
-1)
-b11 -
-1(
-#40000
-0(
-#45000
-b101 9
-b11 3
-b1 :
-0)
-b100 -
-1(
-#50000
-0(
-#55000
-b1111 ;
-b10 :
-b101 -
-1(
-#60000
-0(
-#65000
-b1111 1
-b1111 <
-b100 :
-b110 -
-1(
-#70000
-0(
-#75000
-b1111 5
-b1000 :
-b111 -
-1(
-#80000
-0(
-#85000
-b1111 6
-b10000 :
-b1000 -
-1(
-#90000
-0(
-#95000
-b111 1
-1&
-b111 %
-b111 /
-1+
-1*
+b0 )
+b0 (
 1!
-b1111 7
-b0 :
-b1001 -
-1(
-#100000
-0(
-#105000
+#10000
 0!
-b111 5
-b1 8
-0&
-b1010 -
-1(
+#15000
+1!
+#20000
+0!
+#25000
+0"
+1!
+#30000
+0!
+#35000
+b101 $
+b11 #
+1!
+#40000
+0!
+#45000
+1!
+#50000
+0!
+#55000
+1!
+#60000
+0!
+#65000
+1!
+#70000
+0!
+#75000
+1!
+#80000
+0!
+#85000
+1!
+#90000
+0!
+#95000
+b111 %
+1&
+1'
+1!
+#100000
+0!
+#105000
+1!
 #110000
-0(
+0!
 #115000
-b111 6
-b10 8
-b1011 -
-1(
+1!
 #120000
-0(
+0!
 #125000
-b111 7
-b100 8
-1,
-b1100 -
-1(
+1"
+1!
 #130000
-0(
+0!
 #135000
-0,
-b0 8
-b0 7
-b0 6
-b0 5
-b0 <
-b0 ;
-b0 9
-b0 3
-b1101 -
-1(
+0"
+1!
 #140000
-0(
+0!
 #145000
-b0 1
-b111 5
-0+
-0*
-b1110 -
-1(
+0&
+0'
+1!
 #150000
-0(
+0!
 #155000
-b111 6
-b0 5
-1(
+1!

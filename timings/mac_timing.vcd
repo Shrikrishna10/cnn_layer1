@@ -1,5 +1,5 @@
 $date
-	Sun Dec  7 17:57:00 2025
+	Mon Dec  8 11:27:54 2025
 $end
 $version
 	Icarus Verilog
@@ -7,117 +7,237 @@ $end
 $timescale
 	1ps
 $end
-$scope module tb $end
-$var reg 1 ! clk $end
+$scope module mac_tb $end
+$var wire 20 ! accumulate [19:0] $end
+$var reg 8 " a [7:0] $end
+$var reg 1 # clk $end
+$var reg 20 $ in_ad [19:0] $end
+$var reg 1 % mux_sel $end
+$var reg 1 & mux_sel_g $end
+$var reg 1 ' rst $end
+$var reg 8 ( w [7:0] $end
+$var integer 32 ) cycle_count [31:0] $end
+$scope module dut $end
+$var wire 8 * a [7:0] $end
+$var wire 1 # clk $end
+$var wire 20 + in_ad [19:0] $end
+$var wire 1 % mux_sel $end
+$var wire 1 & mux_sel_g $end
+$var wire 1 ' rst $end
+$var wire 8 , w [7:0] $end
+$var wire 20 - next_mult [19:0] $end
+$var wire 3 . next_count [2:0] $end
+$var wire 20 / next_acc [19:0] $end
+$var wire 20 0 in_add [19:0] $end
+$var wire 20 1 acc_check [19:0] $end
+$var reg 20 2 accumulate [19:0] $end
+$var reg 3 3 count [2:0] $end
+$var reg 20 4 out_mult [19:0] $end
 $upscope $end
-$scope module tb $end
-$var reg 1 " rst $end
 $upscope $end
-$scope module tb $end
-$var reg 16 # in_a [15:0] $end
+$scope module mac_tb $end
+$scope module dut $end
 $upscope $end
-$scope module tb $end
-$var reg 16 $ in_w [15:0] $end
-$upscope $end
-$scope module tb $end
-$var reg 20 % in_ad [19:0] $end
-$upscope $end
-$scope module tb $end
-$var reg 1 & sel_acc $end
-$upscope $end
-$scope module tb $end
-$var reg 1 ' sel_bypass $end
-$upscope $end
-$scope module tb $end
-$var wire 20 ( out_mac [19:0] $end
-$upscope $end
-$scope module tb $end
-$var wire 20 ) out_add [19:0] $end
 $upscope $end
 $enddefinitions $end
+$comment Show the parameter values. $end
+$dumpall
+$end
 #0
 $dumpvars
-bx )
-bx (
-0'
-0&
-b0 %
-b0 $
-b0 #
-1"
-0!
-$end
-#5000
+bx 4
+bx 3
+bx 2
+b0 1
+bx 0
+bx /
+bx .
+bx -
+b0 ,
+b0 +
+b0 *
 b0 )
 b0 (
-1!
-#10000
-0!
-#15000
-1!
-#20000
-0!
-#25000
-0"
-1!
-#30000
-0!
-#35000
-b101 $
-b11 #
-1!
-#40000
-0!
-#45000
-1!
-#50000
-0!
-#55000
-1!
-#60000
-0!
-#65000
-1!
-#70000
-0!
-#75000
-1!
-#80000
-0!
-#85000
-1!
-#90000
-0!
-#95000
-b111 %
-1&
 1'
-b1111 )
-b1111 (
-1!
+0&
+0%
+b0 $
+0#
+b0 "
+bx !
+$end
+#5000
+b1 .
+b0 -
+b0 0
+b0 /
+b0 3
+b0 4
+b0 !
+b0 2
+b1 )
+1#
+#10000
+0#
+#15000
+b101 (
+b101 ,
+b11 "
+b11 *
+0'
+b10 )
+1#
+#20000
+0#
+#25000
+b10 .
+b1111 -
+b1 3
+b11 )
+1#
+#30000
+0#
+#35000
+b1111 0
+b11 .
+b1111 4
+b10 3
+b100 )
+1#
+#40000
+0#
+#45000
+b100 .
+b11 3
+b101 )
+1#
+#50000
+0#
+#55000
+b0 .
+b1111 /
+b100 3
+b110 )
+1#
+#60000
+0#
+#65000
+b1 .
+b1111 1
+b0 3
+b1111 !
+b1111 2
+b111 )
+1%
+b11 (
+b11 ,
+b10 "
+b10 *
+1#
+#70000
+0#
+#75000
+b10 .
+b110 -
+b1 3
+b1000 )
+1#
+#80000
+0#
+#85000
+b11 .
+b110 0
+b10 3
+b110 4
+b1001 )
+1#
+#90000
+0#
+#95000
+b100 .
+b11 3
+b1010 )
+1#
 #100000
-0!
+0#
 #105000
-1!
+b0 .
+b10101 /
+b100 3
+b1011 )
+1#
 #110000
-0!
+0#
 #115000
-1!
+b10101 1
+b1 .
+b10101 !
+b10101 2
+b0 3
+b10101 /
+b100 0
+1&
+b100 $
+b100 +
+b1100 )
+1#
 #120000
-0!
+0#
 #125000
-1!
+b10 .
+b1 3
+b1101 )
+1#
 #130000
-0!
+0#
 #135000
-b10110 )
-b10110 (
-1!
+b11 .
+b10 3
+b1110 )
+1#
 #140000
-0!
+0#
 #145000
-1!
+b100 .
+b11 3
+b1111 )
+1#
 #150000
-0!
+0#
 #155000
-1!
+b0 .
+b11001 /
+b100 3
+b10000 )
+1#
+#160000
+0#
+#165000
+b1 .
+b11001 1
+b0 3
+b11001 !
+b11001 2
+b10001 )
+1#
+#170000
+0#
+#175000
+b10 .
+b1 3
+b10010 )
+1#
+#180000
+0#
+#185000
+b11 .
+b10 3
+b10011 )
+1#
+#190000
+0#
+#195000
+b100 .
+b11 3
+b10100 )
+1#

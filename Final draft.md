@@ -1,6 +1,6 @@
 # 1.  Design Requirements 
 ## 1.1 Problem Statement
-- Implement Conv1 layer for simplified LeNet-5
+- Mapping of Conv1 layer for simplified LeNet-5
 - Input: 8×8 grayscale image (single channel)
 - Kernel: 3×3 convolution
 - Stride: 2
@@ -107,7 +107,7 @@ Since SRAM (16 bytes) cannot hold entire image (64 bytes), data is **streamed**:
 |    21 |  Red  | Reduction step 3     | +     | idle  | idle  | idle  | ACC0+ACC1                                  |
 |    22 |  Red  | (cycle 2/3)          | +     | idle  | idle  | idle  |                                            |
 |    23 |  Red  | (cycle 3/3)          | +     | idle  | idle  | idle  | Final sum ready                            |
-
+![[Pasted image 20251208170311.png]]
 **Result:** Final sum in ACC0   
 Can write to output FIFO / memory in cycle 24.
   
@@ -132,8 +132,16 @@ Clock frequency:
 # 4. Architecture 
 ## 4.1 System-Level Block Diagram
 ![[Pasted image 20251205101514.png]]
-
-## 4.2 MAC Unit Architecture (Your diagram!)
+### 4.1.1 Data Flow
+  Explain step-by-step with arrows:
+  1. External memory → SRAM (weights + pixels)
+  2. SRAM → MAC input registers
+  3. Registers → Multiplier → Product
+  4. Product → Adder (with ACC feedback)
+  5. Adder → ACC register
+  6. For reduction: ACC → MUX → Adder (bypass mult)
+  7. Final ACC → Output
+## 4.2 MAC Unit Architecture 
  ![[Pasted image 20251205101630.png]]
 
 ## 4.3 MAC Array (4 units)
@@ -146,17 +154,7 @@ Clock frequency:
   - Handles SRAM addressing
   - Coordinates external memory access
 ![[Pasted image 20251207071813.png]]
-
-  ## 4.5 Data Flow
-  Explain step-by-step with arrows:
-  1. External memory → SRAM (weights + pixels)
-  2. SRAM → MAC input registers
-  3. Registers → Multiplier → Product
-  4. Product → Adder (with ACC feedback)
-  5. Adder → ACC register
-  6. For reduction: ACC → MUX → Adder (bypass mult)
-  7. Final ACC → Output
-## 4.6 Critical Signals
+## 4.5 Critical Signals
   List main control signals:
   - clk: System clock (~1.5 kHz)
   - reset: Global reset
@@ -167,7 +165,23 @@ Clock frequency:
   - sram_we: SRAM write enable
   - ext_mem_rd: External memory read
   - ext_mem_wr: External memory write
-
-# 5. Timing scheme
-
-
+# 5. Final Notes and Summary
+## 5.1 Pipeline Stalls & Hazards
+Even though the schedule is fixed, a few practical issues can introduce stalls:
+- Memory stalls: external bandwidth variation, SRAM port contention, and patch reloads can delay MAC start times.
+- Compute stalls: multiplier/adder latency mismatch or accumulator dependencies can bubble the pipeline.
+- Control hazards: off-by-one transitions in batch switching or incorrect address generation can corrupt patch outputs.
+These don’t break the architecture but require tight control alignment and predictable memory behaviour.
+## 5.2 Low Clock Frequency
+The derived clock requirement (≈1.5 kHz) is artificially low because the design is fully bandwidth-bound.  
+Real hardware can operate much faster, but compute units will remain idle unless memory bandwidth increases.
+## 5.3 Extending to FP32
+The same scheduling and control structure can be applied to FP32, but:
+- FP units have deeper pipelines (3–6 stages).
+- Accumulators require exponent alignment + normalization.
+- Memory footprint grows 4×, making the 16-byte SRAM insufficient.
+Conceptually the flow maps over, but the hardware cost grows significantly.
+## 5.4 Resource Summary
+- Compute: 4 MACs (8×8→16-bit mult, 20-bit ACC, MAC/ADD modes).
+- Memory: 16-byte dual-port SRAM (8 B/cycle total), external 1 KB/s interface.
+- Performance: 24 cycles/patch → 384 cycles/image → ≈4 images/s (bandwidth-limited).
